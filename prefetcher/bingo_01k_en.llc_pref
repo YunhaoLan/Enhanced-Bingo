@@ -455,7 +455,7 @@ class PatternHistoryTable : LRUSetAssociativeCache<PatternHistoryTableData> {
     };
 
     // 定义每个 set 内部 victim buffer 的大小（可根据需要调整）
-    static const int VICTIM_BUFFER_SIZE = 2;
+    static const int VICTIM_BUFFER_SIZE = 20;
 
     PatternHistoryTable(
         int size, int pattern_len, int min_addr_width, int max_addr_width, int pc_width, int num_ways = 16)
@@ -487,53 +487,64 @@ class PatternHistoryTable : LRUSetAssociativeCache<PatternHistoryTableData> {
         // 标记该条目为最近使用（MRU）
         this->set_mru(key);
 
-        // 如果发生淘汰，则对淘汰条目进行处理
         if (evicted.valid) {
-            // 提取新插入条目和淘汰条目的“短事件”（即 key 的低 min_addr_width 位）
-            uint64_t new_short = key & ((1ULL << this->min_addr_width) - 1);
-            uint64_t evicted_short = evicted.key & ((1ULL << this->min_addr_width) - 1);
-            // 根据 key 计算所在的 set 索引
             uint64_t index = key % this->num_sets;
-            
-            if (new_short != evicted_short) {
-                // 情况1：新插入与淘汰的短事件不同
-                // 检查 victim buffer 中是否已存在该淘汰条目的短事件
-                bool exists = false;
-                for (const auto &ve : victim_buffer[index]) {
-                    uint64_t ve_short = ve.key & ((1ULL << this->min_addr_width) - 1);
-                    if (ve_short == evicted_short) {
-                        exists = true;
-                        break;
-                    }
-                }
-                // 如果没有，则将淘汰的条目加入 victim buffer
-                if (!exists) {
-                    victim_buffer[index].push_back({evicted.key, evicted.data.pattern});
-                }
-            } else {
-                // 情况2：新插入与淘汰的短事件相同
-                // 检查 victim buffer 是否已有该短事件的条目
-                bool found = false;
-                for (auto &ve : victim_buffer[index]) {
-                    uint64_t ve_short = ve.key & ((1ULL << this->min_addr_width) - 1);
-                    if (ve_short == new_short) {
-                        // 如果找到，则更新该条目，使用新淘汰的值（优先新淘汰的）
-                        ve.key = evicted.key;
-                        ve.pattern = evicted.data.pattern;
-                        found = true;
-                        break;
-                    }
-                }
-                // 如果没有找到，则将淘汰条目加入 victim buffer
-                if (!found) {
-                    victim_buffer[index].push_back({evicted.key, evicted.data.pattern});
-                }
-            }
-            // 如果 victim buffer 超出大小限制，则移除最旧的条目（先进先出策略）
-            while (victim_buffer[index].size() > VICTIM_BUFFER_SIZE) {
-                victim_buffer[index].erase(victim_buffer[index].begin());
+            auto &buf = victim_buffer[index];
+            // 1) 新条目当 MRU 放到末尾
+            buf.push_back({ evicted.key, evicted.data.pattern });
+            // 2) 超过容量，就丢弃最旧的
+            if (buf.size() > VICTIM_BUFFER_SIZE) {
+                buf.erase(buf.begin());
             }
         }
+
+        // // 如果发生淘汰，则对淘汰条目进行处理
+        // if (evicted.valid) {
+        //     // 提取新插入条目和淘汰条目的“短事件”（即 key 的低 min_addr_width 位）
+        //     uint64_t new_short = key & ((1ULL << this->min_addr_width) - 1);
+        //     uint64_t evicted_short = evicted.key & ((1ULL << this->min_addr_width) - 1);
+        //     // 根据 key 计算所在的 set 索引
+        //     uint64_t index = key % this->num_sets;
+            
+        //     if (new_short != evicted_short) {
+        //         // 情况1：新插入与淘汰的短事件不同
+        //         // 检查 victim buffer 中是否已存在该淘汰条目的短事件
+        //         bool exists = false;
+        //         for (const auto &ve : victim_buffer[index]) {
+        //             uint64_t ve_short = ve.key & ((1ULL << this->min_addr_width) - 1);
+        //             if (ve_short == evicted_short) {
+        //                 exists = true;
+        //                 break;
+        //             }
+        //         }
+        //         // 如果没有，则将淘汰的条目加入 victim buffer
+        //         if (!exists) {
+        //             victim_buffer[index].push_back({evicted.key, evicted.data.pattern});
+        //         }
+        //     } else {
+        //         // 情况2：新插入与淘汰的短事件相同
+        //         // 检查 victim buffer 是否已有该短事件的条目
+        //         bool found = false;
+        //         for (auto &ve : victim_buffer[index]) {
+        //             uint64_t ve_short = ve.key & ((1ULL << this->min_addr_width) - 1);
+        //             if (ve_short == new_short) {
+        //                 // 如果找到，则更新该条目，使用新淘汰的值（优先新淘汰的）
+        //                 ve.key = evicted.key;
+        //                 ve.pattern = evicted.data.pattern;
+        //                 found = true;
+        //                 break;
+        //             }
+        //         }
+        //         // 如果没有找到，则将淘汰条目加入 victim buffer
+        //         if (!found) {
+        //             victim_buffer[index].push_back({evicted.key, evicted.data.pattern});
+        //         }
+        //     }
+        //     // 如果 victim buffer 超出大小限制，则移除最旧的条目（先进先出策略）
+        //     while (victim_buffer[index].size() > VICTIM_BUFFER_SIZE) {
+        //         victim_buffer[index].erase(victim_buffer[index].begin());
+        //     }
+        // }
     }
 
     /**
@@ -570,15 +581,15 @@ class PatternHistoryTable : LRUSetAssociativeCache<PatternHistoryTableData> {
             uint64_t victim_tag = victim.key / this->num_sets;
             bool victim_min_match = ((victim_tag & min_tag_mask) == (tag & min_tag_mask));
             bool victim_max_match = ((victim_tag & max_tag_mask) == (tag & max_tag_mask));
-            if (victim_max_match) {
-                // 如果 victim buffer 中存在强匹配，则直接返回该预测 pattern
-                pattern = victim.pattern;
-                break;
-            }
-            // 同时也收集符合弱匹配条件的 candidate
-            // if (victim_min_match){
-            //     min_matches.push_back(victim.pattern);
+            // if (victim_max_match) {
+            //     // 如果 victim buffer 中存在强匹配，则直接返回该预测 pattern
+            //     pattern = victim.pattern;
+            //     break;
             // }
+            // 同时也收集符合弱匹配条件的 candidate
+            if (victim_min_match){
+                min_matches.push_back(victim.pattern);
+            }
         }
 
         if (pattern.empty()) {

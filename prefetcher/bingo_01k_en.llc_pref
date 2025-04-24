@@ -455,7 +455,7 @@ class PatternHistoryTable : LRUSetAssociativeCache<PatternHistoryTableData> {
     };
 
     // 定义每个 set 内部 victim buffer 的大小（可根据需要调整）
-    static const int VICTIM_BUFFER_SIZE = 20;
+    static const int VICTIM_BUFFER_SIZE = 100;
 
     PatternHistoryTable(
         int size, int pattern_len, int min_addr_width, int max_addr_width, int pc_width, int num_ways = 16)
@@ -497,6 +497,46 @@ class PatternHistoryTable : LRUSetAssociativeCache<PatternHistoryTableData> {
                 buf.erase(buf.begin());
             }
         }
+
+        // if (evicted.valid) {
+        //     uint64_t index = key % this->num_sets;
+
+        //     // 1) 先检查 PHT 主表的同一 set，看看有没有相同的 key
+        //     bool in_main_table = false;
+        //     for (auto &e : this->entries[index]) {
+        //         if (e.valid && e.key == evicted.key) {
+        //             in_main_table = true;
+        //             break;
+        //         }
+        //     }
+
+        //     // 2) 只有当主表里没有这个条目时，才把它放到 victim buffer
+        //     if (!in_main_table) {
+        //         auto &buf = victim_buffer[index];
+        //         buf.push_back({ evicted.key, evicted.data.pattern });   // MRU 放末尾
+        //         if (buf.size() > VICTIM_BUFFER_SIZE) {
+        //             buf.erase(buf.begin());   // LRU 丢头部
+        //         }
+        //     }
+        // }
+
+        // if (evicted.valid) {
+        //     // 1) 提取新插入 vs. 被淘汰条目的短事件（低 min_addr_width 位）
+        //     uint64_t new_short     = key             & ((1ULL << min_addr_width) - 1);
+        //     uint64_t evicted_short = evicted.key     & ((1ULL << min_addr_width) - 1);
+
+        //     // 2) 只有当它们不相等时，才放入 victim buffer
+        //     if (new_short != evicted_short) {
+        //         uint64_t index = key % this->num_sets;
+        //         auto &buf = victim_buffer[index];
+        //         // MRU 放到末尾
+        //         buf.push_back({ evicted.key, evicted.data.pattern });
+        //         // 超出容量则 LRU 丢头部
+        //         if (buf.size() > VICTIM_BUFFER_SIZE) {
+        //             buf.erase(buf.begin());
+        //         }
+        //     }
+        // }
 
         // // 如果发生淘汰，则对淘汰条目进行处理
         // if (evicted.valid) {
@@ -728,8 +768,8 @@ class Bingo {
 
 /* Bingo settings */
 const int REGION_SIZE = 2 * 1024;
-const int MIN_ADDR_WIDTH = 5;
-const int MAX_ADDR_WIDTH = 16;
+const int MIN_ADDR_WIDTH = 10;
+const int MAX_ADDR_WIDTH = 11;
 const int PC_WIDTH = 16;
 const int PHT_SIZE = 1 * 1024;
 const int FT_SIZE = 64;
